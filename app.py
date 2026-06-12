@@ -1,28 +1,45 @@
 import streamlit as st
 import numpy as np
-import joblib
 import pandas as pd
+import joblib
+import os
+import shap
 import matplotlib.pyplot as plt
 import seaborn as sns
-import shap
 from sklearn.metrics import confusion_matrix, roc_curve, auc
 from datetime import datetime
 
-# ================= LOAD =================
-heart_model = joblib.load("models/heart_model.pkl")
-stroke_model = joblib.load("models/stroke_model.pkl")
+# ================= CONFIG =================
+st.set_page_config(page_title="CardioAI", layout="wide")
 
-heart_test = joblib.load("models/heart_test.pkl")
-stroke_test = joblib.load("models/stroke_test.pkl")
+# ================= LOAD MODEL =================
+def load_model(path):
+    if os.path.exists(path):
+        return joblib.load(path)
+    return None
 
-# lưu lịch sử tạm (runtime)
+heart_model = load_model("models/heart_model.pkl")
+stroke_model = load_model("models/stroke_model.pkl")
+
+# ================= SESSION =================
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# ================= CONFIG =================
-st.set_page_config(page_title="Smart Healthcare AI", layout="wide")
+# ================= UI HEADER =================
+st.title("🧠💓 CardioAI - Smart Healthcare Dashboard")
+st.markdown("Predict Heart Disease and Stroke Risk with Explainable Models")
 
-st.title("🧠💓 SMART HEALTHCARE AI DASHBOARD")
+# ================= SIDEBAR =================
+menu = st.sidebar.radio(
+    "📌 Menu",
+    ["Prediction", "Upload Dataset", "Model Analysis", "History"]
+)
+
+st.sidebar.markdown("### 📥 Dataset")
+st.sidebar.markdown("""
+[Heart Dataset](https://www.kaggle.com/datasets/redwankarimsony/heart-disease-data)  
+[Stroke Dataset](https://www.kaggle.com/datasets/fedesoriano/stroke-prediction-dataset)
+""")
 
 # ================= UTILS =================
 def get_risk(prob):
@@ -30,57 +47,112 @@ def get_risk(prob):
         return "LOW ✅"
     elif prob < 0.7:
         return "MEDIUM ⚠️"
-    else:
-        return "HIGH 🚨"
+    return "HIGH 🚨"
 
-def show_confusion_matrix(y_true, y_pred):
-    cm = confusion_matrix(y_true, y_pred)
-    fig, ax = plt.subplots()
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
-    st.pyplot(fig)
 
-def show_roc(y_true, y_prob):
-    fpr, tpr, _ = roc_curve(y_true, y_prob)
-    roc_auc = auc(fpr, tpr)
+# ================= AUTO DETECT =================
+def preprocess_df(df):
+    df = df.copy()
 
-    fig, ax = plt.subplots()
-    ax.plot(fpr, tpr, label=f"AUC = {roc_auc:.2f}")
-    ax.plot([0, 1], [0, 1], linestyle="--")
-    ax.legend()
-    st.pyplot(fig)
+    # convert categorical automatically
+    for col in df.columns:
+        if df[col].dtype == "object":
+            df[col] = df[col].astype("category").cat.codes
 
-def show_shap(model, input_data, feature_names):
-    st.subheader("🔍 SHAP Explainability")
+    # fill missing
+    df = df.fillna(df.mean(numeric_only=True))
 
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(input_data)
+    return df
 
-    values = shap_values[1][0]
 
-    df = pd.DataFrame({
-        "Feature": feature_names,
-        "Impact": values
-    }).sort_values(by="Impact", key=abs, ascending=False)
+# ================= SHAP =================
+def show_shap(model, data, feature_names):
+    try:
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(data)
 
-    st.write(df)
-    st.bar_chart(df.set_index("Feature"))
+        st.subheader("🔍 Feature Impact")
 
-# ================= SIDEBAR =================
-menu = st.sidebar.radio(
-    "📌 Menu",
-    ["Prediction", "Model Analysis", "Batch Prediction", "History"]
-)
+        df = pd.DataFrame({
+            "Feature": feature_names,
+            "Impact": shap_values[1][0]
+        }).sort_values(by="Impact", key=abs, ascending=False)
 
-# ================= PREDICTION =================
-if menu == "Prediction":
+        st.bar_chart(df.set_index("Feature"))
 
-    option = st.selectbox("Chọn chức năng", ["Heart Disease", "Stroke"])
+        # ===== SHAP FORCE PLOT =====
+        st.subheader("⚡ SHAP Force Plot")
+
+        fig = plt.figure()
+        shap.force_plot(
+            explainer.expected_value[1],
+            shap_values[1][0],
+            matplotlib=True,
+            show=False
+        )
+        st.pyplot(fig)
+
+        # ===== SAVE FIG =====
+        fig.savefig("shap_plot.png")
+
+        st.download_button(
+            "📥 Download SHAP figure",
+            open("shap_plot.png", "rb"),
+            file_name="shap_plot.png"
+        )
+
+    except Exception as e:
+        st.warning(f"SHAP error: {e}")
+
+
+# ================= METRICS =================
+def show_metrics(model, X_test, y_test):
+    y_pred = model.predict(X_test)
+    y_prob = model.predict_proba(X_test)[:, 1]
 
     col1, col2 = st.columns(2)
 
-    # ========= HEART =========
-    if option == "Heart Disease":
-        st.subheader("❤️ Heart Disease Prediction")
+    # CONFUSION MATRIX
+    with col1:
+        cm = confusion_matrix(y_test, y_pred)
+        fig, ax = plt.subplots()
+        sns.heatmap(cm, annot=True, fmt="d", ax=ax)
+        st.pyplot(fig)
+
+        fig.savefig("confusion_matrix.png")
+        st.download_button(
+            "Download CM",
+            open("confusion_matrix.png", "rb"),
+            file_name="cm.png"
+        )
+
+    # ROC
+    with col2:
+        fpr, tpr, _ = roc_curve(y_test, y_prob)
+        roc_auc = auc(fpr, tpr)
+
+        fig, ax = plt.subplots()
+        ax.plot(fpr, tpr, label=f"AUC={roc_auc:.2f}")
+        ax.plot([0, 1], [0, 1], linestyle="--")
+        ax.legend()
+        st.pyplot(fig)
+
+        fig.savefig("roc_curve.png")
+        st.download_button(
+            "Download ROC",
+            open("roc_curve.png", "rb"),
+            file_name="roc.png"
+        )
+
+
+# ================= 1. PREDICTION =================
+if menu == "Prediction":
+
+    tab1, tab2 = st.tabs(["❤️ Heart", "🧠 Stroke"])
+
+    # HEART
+    with tab1:
+        col1, col2 = st.columns(2)
 
         with col1:
             age = st.slider("Age", 20, 80, 40)
@@ -90,28 +162,18 @@ if menu == "Prediction":
         with col2:
             chol = st.slider("Cholesterol", 100, 400, 200)
             thalach = st.slider("Heart Rate", 70, 210, 150)
-            sex = st.selectbox("Sex (0=female,1=male)", [0, 1])
+            sex = st.selectbox("Sex", [0, 1])
 
         if st.button("Predict Heart"):
-
             data = np.array([[age, sex, cp, trestbps, chol,
                               0, 0, thalach, 0,
                               0, 1, 0, 2]])
 
-            proba = heart_model.predict_proba(data)[0][1]
-            pred = heart_model.predict(data)[0]
+            prob = heart_model.predict_proba(data)[0][1]
 
-            st.metric("Risk", get_risk(proba))
-            st.progress(float(proba))
+            st.metric("Risk", get_risk(prob))
+            st.progress(float(prob))
 
-            # lưu history
-            st.session_state.history.append({
-                "time": datetime.now(),
-                "type": "heart",
-                "prob": proba
-            })
-
-            # SHAP
             show_shap(
                 heart_model,
                 data,
@@ -119,9 +181,9 @@ if menu == "Prediction":
                  "hr","exang","oldpeak","slope","ca","thal"]
             )
 
-    # ========= STROKE =========
-    else:
-        st.subheader("🧠 Stroke Prediction")
+    # STROKE
+    with tab2:
+        col1, col2 = st.columns(2)
 
         with col1:
             age = st.slider("Age", 1, 100, 40)
@@ -133,93 +195,70 @@ if menu == "Prediction":
             bmi = st.slider("BMI", 10.0, 50.0, 25.0)
 
         if st.button("Predict Stroke"):
-
             data = np.array([[age, hypertension, heart_disease,
                               1, 2, 0, glucose, bmi, 1]])
 
-            proba = stroke_model.predict_proba(data)[0][1]
-            pred = stroke_model.predict(data)[0]
+            prob = stroke_model.predict_proba(data)[0][1]
 
-            st.metric("Risk", get_risk(proba))
-            st.progress(float(proba))
-
-            st.session_state.history.append({
-                "time": datetime.now(),
-                "type": "stroke",
-                "prob": proba
-            })
+            st.metric("Risk", get_risk(prob))
+            st.progress(float(prob))
 
             show_shap(
                 stroke_model,
                 data,
-                ["age","hypertension","heart_disease",
-                 "married","work","residence",
-                 "glucose","bmi","smoking"]
+                ["age","htn","heart","married",
+                 "work","res","glucose","bmi","smoke"]
             )
 
-# ================= ANALYSIS =================
-elif menu == "Model Analysis":
 
-    option = st.selectbox("Chọn model", ["Heart", "Stroke"])
-
-    if option == "Heart":
-        X_test, y_test = heart_test
-        model = heart_model
-    else:
-        X_test, y_test = stroke_test
-        model = stroke_model
-
-    y_pred = model.predict(X_test)
-    y_prob = model.predict_proba(X_test)[:, 1]
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("📊 Confusion Matrix")
-        show_confusion_matrix(y_test, y_pred)
-
-    with col2:
-        st.subheader("📈 ROC Curve")
-        show_roc(y_test, y_prob)
-
-# ================= BATCH =================
-elif menu == "Batch Prediction":
+# ================= 2. UPLOAD =================
+elif menu == "Upload Dataset":
 
     st.subheader("📂 Upload CSV")
 
-    file = st.file_uploader("Upload file", type=["csv"])
+    file = st.file_uploader("Upload dataset", type=["csv"])
 
     if file:
         df = pd.read_csv(file)
         st.write(df.head())
 
-        if st.button("Predict Batch"):
-            preds = heart_model.predict(df)
-            df["Prediction"] = preds
+        df = preprocess_df(df)
 
-            st.write(df)
-            st.download_button(
-                "Download",
-                df.to_csv(index=False),
-                "result.csv"
-            )
+        model_option = st.selectbox("Model", ["Heart", "Stroke"])
 
-# ================= HISTORY =================
+        if st.button("Predict Dataset"):
+            try:
+                model = heart_model if model_option == "Heart" else stroke_model
+
+                preds = model.predict(df)
+                probs = model.predict_proba(df)[:, 1]
+
+                df["Prediction"] = preds
+                df["Probability"] = probs
+
+                st.write(df)
+
+                st.download_button(
+                    "Download Result",
+                    df.to_csv(index=False),
+                    "result.csv"
+                )
+
+            except Exception as e:
+                st.error(f"Data error: {e}")
+
+
+# ================= 3. HISTORY =================
 elif menu == "History":
 
-    st.subheader("📜 Prediction History")
-
-    if len(st.session_state.history) > 0:
+    if st.session_state.history:
         df = pd.DataFrame(st.session_state.history)
         st.dataframe(df)
 
-        fig, ax = plt.subplots()
-        ax.plot(df["prob"])
-        ax.set_title("Risk Trend")
-        st.pyplot(fig)
+        st.line_chart(df["prob"])
     else:
-        st.info("Chưa có dữ liệu")
+        st.info("No history yet")
 
 # ================= FOOTER =================
 st.markdown("---")
-st.caption("Smart Healthcare AI - Student Research Project")
+st.caption("CardioAI - Research Dashboard")
