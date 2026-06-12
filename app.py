@@ -4,7 +4,6 @@ import numpy as np
 import joblib
 import os
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler
 
 st.set_page_config(layout="wide")
 
@@ -15,59 +14,111 @@ def load(path):
 heart_model = load("models/heart_model.pkl")
 heart_scaler = load("models/heart_scaler.pkl")
 
-# ================= STYLE =================
+# ================= HEADER + NAVBAR =================
 st.markdown("""
 <style>
-.header {
+.header-top {
     background-color: #1f5fa7;
-    padding: 15px;
     color: white;
+    padding: 8px 20px;
+    font-size: 14px;
 }
-.menu {
-    background-color: #ffffff;
-    padding: 10px;
+.header-main {
+    display: flex;
+    align-items: center;
+    padding: 15px 20px;
     border-bottom: 1px solid #ddd;
 }
-.menu span {
-    margin-right: 30px;
+.menu-bar {
+    display: flex;
+    gap: 30px;
+    padding: 10px 20px;
+    border-bottom: 1px solid #ddd;
+}
+.menu-item {
+    position: relative;
     cursor: pointer;
     font-weight: 500;
 }
+.dropdown {
+    display: none;
+    position: absolute;
+    top: 30px;
+    left: 0;
+    background: white;
+    padding: 15px;
+    border: 1px solid #ddd;
+    min-width: 300px;
+    z-index: 999;
+}
+.menu-item:hover .dropdown {
+    display: block;
+}
 .card {
-    background: #f8f9fa;
+    background: #f5f7fa;
     padding: 20px;
     border-radius: 10px;
 }
 </style>
 
-<div class="header">
-<h2>BỆNH VIỆN ĐẠI HỌC Y DƯỢC TP.HCM</h2>
+<div class="header-top">
+Trung tâm phục vụ cộng đồng | Tư vấn - Dịch vụ - Công nghệ y tế
 </div>
 
-<div class="menu">
-<span>Về Bệnh viện</span>
-<span>Chuyên khoa</span>
-<span>Bác sĩ</span>
-<span>Dịch vụ</span>
-<span>Thư viện sức khỏe</span>
-<span>Tin tức & Sự kiện</span>
-<span>Hỗ trợ người bệnh</span>
+<div class="header-main">
+<h3>TRUNG TÂM CHẨN ĐOÁN Y KHOA 1009 - THÀNH PHỐ HỒ CHÍ MINH</h3>
+</div>
+
+<div class="menu-bar">
+
+<div class="menu-item">Trang chủ</div>
+
+<div class="menu-item">Về trung tâm
+<div class="dropdown">
+<p>Thành lập năm 2026.</p>
+<p>Chuyên chẩn đoán bệnh lý tim mạch, đột quỵ.</p>
+<p>Ứng dụng Machine Learning và phân tích dữ liệu y khoa.</p>
+</div>
+</div>
+
+<div class="menu-item">Chuyên khoa
+<div class="dropdown">
+<b>Khoa lâm sàng</b><br>
+Tim mạch<br>
+Cấp cứu<br>
+Chấn thương chỉnh hình<br><br>
+<b>Khoa cận lâm sàng</b><br>
+Chẩn đoán hình ảnh<br>
+Xét nghiệm<br>
+Vi sinh
+</div>
+</div>
+
+<div class="menu-item">Bác sĩ
+<div class="dropdown">
+Danh sách bác sĩ chuyên khoa<br>
+Theo lĩnh vực chẩn đoán<br>
+Theo kinh nghiệm
+</div>
+</div>
+
+<div class="menu-item">Dịch vụ</div>
+<div class="menu-item">Thư viện sức khỏe</div>
+<div class="menu-item">Tin tức & Sự kiện</div>
+
 </div>
 """, unsafe_allow_html=True)
 
-# ================= MENU =================
-menu = st.selectbox(
-    "",
-    [
-        "Trang chủ",
-        "Dự đoán",
-        "Upload dữ liệu",
-        "Dashboard",
-        "Giải thích mô hình",
-        "Báo cáo",
-        "Hỏi đáp"
-    ]
-)
+# ================= MAIN MENU =================
+menu = st.sidebar.radio("", [
+    "Trang chủ",
+    "Dự đoán",
+    "Upload dữ liệu",
+    "Dashboard",
+    "Giải thích",
+    "Báo cáo",
+    "Hỏi đáp"
+])
 
 # ================= HOME =================
 if menu == "Trang chủ":
@@ -78,8 +129,8 @@ if menu == "Trang chủ":
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.subheader("Giới thiệu")
         st.write("""
-Hệ thống hỗ trợ dự đoán bệnh tim dựa trên dữ liệu y khoa.
-Ứng dụng trong sàng lọc và hỗ trợ quyết định lâm sàng.
+Trung tâm chẩn đoán y khoa 1009 cung cấp giải pháp dự đoán bệnh tim
+dựa trên công nghệ học máy và phân tích dữ liệu hiện đại.
 """)
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -88,8 +139,6 @@ Hệ thống hỗ trợ dự đoán bệnh tim dựa trên dữ liệu y khoa.
 
 # ================= PREDICT =================
 elif menu == "Dự đoán":
-
-    st.subheader("Dự đoán nguy cơ bệnh tim")
 
     col1, col2 = st.columns(2)
 
@@ -101,69 +150,53 @@ elif menu == "Dự đoán":
         bp = st.slider("Blood Pressure", 80, 200, 120)
         hr = st.slider("Heart Rate", 60, 200, 150)
 
-    if st.button("Chạy dự đoán"):
+    if st.button("Dự đoán"):
+
+        data = np.array([[age,1,2,bp,chol,0,1,hr,0,1.0,1,0,2]])
 
         try:
-            data = np.array([[age,1,2,bp,chol,0,1,hr,0,1.0,1,0,2]])
-
-            if heart_scaler is not None:
+            if heart_scaler:
                 data = heart_scaler.transform(data)
 
-            if heart_model is not None:
+            if heart_model:
                 prob = heart_model.predict_proba(data)[0][1]
             else:
                 prob = (age/80 + chol/400 + bp/200) / 3
 
-            st.success("Kết quả")
-            st.metric("Nguy cơ", f"{prob:.2f}")
+            st.success(f"Nguy cơ: {prob:.2f}")
 
-            st.session_state["data"] = data
             st.session_state["prob"] = prob
+            st.session_state["data"] = data
 
         except:
-            st.error("Lỗi dữ liệu")
+            st.error("Lỗi dự đoán")
 
 # ================= UPLOAD =================
 elif menu == "Upload dữ liệu":
 
-    st.subheader("Upload dữ liệu")
-
-    file = st.file_uploader("Chọn file", type=["csv","xlsx"])
+    file = st.file_uploader("Upload file", ["csv","xlsx"])
 
     if file:
-
         try:
-            if file.name.endswith(".csv"):
-                df = pd.read_csv(file)
-            else:
-                df = pd.read_excel(file)
-
-            df.columns = df.columns.str.strip().str.lower()
-
+            df = pd.read_csv(file) if file.name.endswith("csv") else pd.read_excel(file)
+            df.columns = df.columns.str.lower()
             st.dataframe(df.head())
 
-            if st.button("Dự đoán batch"):
+            if st.button("Chạy"):
 
                 X = df.select_dtypes(include=np.number).iloc[:, :13]
 
-                if heart_scaler is not None:
+                if heart_scaler:
                     X = heart_scaler.transform(X)
 
-                if heart_model is not None:
+                if heart_model:
                     df["Prediction"] = heart_model.predict(X)
                     df["Probability"] = heart_model.predict_proba(X)[:,1]
                 else:
-                    df["Prediction"] = np.random.randint(0,2,len(df))
-                    df["Probability"] = np.random.rand(len(df))
+                    df["Prediction"] = np.random.randint(0,2,len(X))
+                    df["Probability"] = np.random.rand(len(X))
 
-                st.success("Hoàn thành")
                 st.dataframe(df)
-
-                st.download_button(
-                    "Tải kết quả",
-                    df.to_csv(index=False),
-                    "result.csv"
-                )
 
         except:
             st.error("File lỗi")
@@ -171,9 +204,7 @@ elif menu == "Upload dữ liệu":
 # ================= DASHBOARD =================
 elif menu == "Dashboard":
 
-    st.subheader("Dashboard")
-
-    data = pd.DataFrame(np.random.randn(50,3), columns=["A","B","C"])
+    data = pd.DataFrame(np.random.randn(100,3), columns=["Risk","Cholesterol","BP"])
 
     col1, col2 = st.columns(2)
 
@@ -181,12 +212,10 @@ elif menu == "Dashboard":
         st.line_chart(data)
 
     with col2:
-        st.area_chart(data)
+        st.bar_chart(data)
 
 # ================= SHAP =================
-elif menu == "Giải thích mô hình":
-
-    st.subheader("Giải thích")
+elif menu == "Giải thích":
 
     if "data" not in st.session_state:
         st.warning("Chưa có dữ liệu")
@@ -194,42 +223,31 @@ elif menu == "Giải thích mô hình":
         try:
             import shap
             explainer = shap.TreeExplainer(heart_model)
-            shap_values = explainer.shap_values(st.session_state["data"])
+            sv = explainer.shap_values(st.session_state["data"])
 
             fig = plt.figure()
-            shap.summary_plot(shap_values[1], st.session_state["data"], show=False)
+            shap.summary_plot(sv[1], st.session_state["data"], show=False)
             st.pyplot(fig)
         except:
-            st.warning("Không hỗ trợ SHAP")
+            st.warning("Không hỗ trợ")
 
 # ================= REPORT =================
 elif menu == "Báo cáo":
-
-    st.subheader("Xuất báo cáo")
 
     if "prob" not in st.session_state:
         st.warning("Chưa có dữ liệu")
     else:
         if st.button("Tạo báo cáo"):
-            report = f"""
-CARDIOAI REPORT
-Risk Score: {st.session_state['prob']:.2f}
-Recommendation: Follow medical checkup.
-"""
+            report = f"Risk Score: {st.session_state['prob']:.2f}"
             st.download_button("Download", report, "report.txt")
 
 # ================= QA =================
 elif menu == "Hỏi đáp":
 
-    st.subheader("Hỏi đáp")
-
-    q = st.text_input("Nhập câu hỏi")
+    q = st.text_input("Hỏi gì đó")
 
     if q:
-        q = q.lower()
-        if "tim" in q:
-            st.write("Nguy cơ bệnh tim liên quan huyết áp, cholesterol.")
-        elif "đột quỵ" in q:
-            st.write("Đột quỵ liên quan huyết áp và đường huyết.")
+        if "tim" in q.lower():
+            st.write("Bệnh tim liên quan huyết áp và cholesterol.")
         else:
-            st.write("Chỉ hỗ trợ bệnh tim và đột quỵ.")
+            st.write("Chỉ hỗ trợ bệnh tim.")
