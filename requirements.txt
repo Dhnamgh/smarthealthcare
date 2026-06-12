@@ -7,5 +7,3 @@ matplotlib
 seaborn
 shap
 openpyxl
-sentence-transformers
-torch
