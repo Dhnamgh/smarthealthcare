@@ -1,264 +1,197 @@
 import streamlit as st
-import numpy as np
 import pandas as pd
+import numpy as np
 import joblib
 import os
 import shap
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix, roc_curve, auc
-from datetime import datetime
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import confusion_matrix, roc_curve, auc, accuracy_score, precision_score, recall_score, f1_score
 
-# ================= CONFIG =================
 st.set_page_config(page_title="CardioAI", layout="wide")
 
-# ================= LOAD MODEL =================
+# ================= LOAD =================
 def load_model(path):
-    if os.path.exists(path):
-        return joblib.load(path)
-    return None
+    return joblib.load(path) if os.path.exists(path) else None
 
 heart_model = load_model("models/heart_model.pkl")
 stroke_model = load_model("models/stroke_model.pkl")
 
-# ================= SESSION =================
-if "history" not in st.session_state:
-    st.session_state.history = []
+# ================= FEATURES =================
+HEART = ["age","sex","cp","trestbps","chol","fbs","restecg","thalach","exang","oldpeak","slope","ca","thal"]
+STROKE = ["age","gender","hypertension","heart_disease","ever_married","work_type","residence","avg_glucose","bmi","smoking"]
 
-# ================= UI HEADER =================
-st.title("🧠💓 CardioAI - Smart Healthcare Dashboard")
-st.markdown("Predict Heart Disease and Stroke Risk with Explainable Models")
+# ================= AUTO MAP =================
+def auto_map(df, features):
+    mapping = {}
+    for col in df.columns:
+        for f in features:
+            if f in col.lower() or col.lower() in f:
+                mapping[col] = f
+    return df.rename(columns=mapping)
 
-# ================= SIDEBAR =================
-menu = st.sidebar.radio(
-    "📌 Menu",
-    ["Prediction", "Upload Dataset", "Model Analysis", "History"]
-)
-
-st.sidebar.markdown("### 📥 Dataset")
-st.sidebar.markdown("""
-[Heart Dataset](https://www.kaggle.com/datasets/redwankarimsony/heart-disease-data)  
-[Stroke Dataset](https://www.kaggle.com/datasets/fedesoriano/stroke-prediction-dataset)
-""")
-
-# ================= UTILS =================
-def get_risk(prob):
-    if prob < 0.3:
-        return "LOW ✅"
-    elif prob < 0.7:
-        return "MEDIUM ⚠️"
-    return "HIGH 🚨"
-
-
-# ================= AUTO DETECT =================
-def preprocess_df(df):
+# ================= PREPROCESS =================
+def preprocess(df):
     df = df.copy()
 
-    # convert categorical automatically
+    # categorical → numeric
     for col in df.columns:
         if df[col].dtype == "object":
             df[col] = df[col].astype("category").cat.codes
 
-    # fill missing
-    df = df.fillna(df.mean(numeric_only=True))
+    # xử lý missing
+    df = df.replace([np.inf, -np.inf], np.nan)
+    df = df.fillna(df.mean())
 
     return df
 
+# ================= SCALING =================
+def scale_data(df):
+    scaler = StandardScaler()
+    scaled = scaler.fit_transform(df)
+    return pd.DataFrame(scaled, columns=df.columns)
 
-# ================= SHAP =================
-def show_shap(model, data, feature_names):
-    try:
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(data)
-
-        st.subheader("🔍 Feature Impact")
-
-        df = pd.DataFrame({
-            "Feature": feature_names,
-            "Impact": shap_values[1][0]
-        }).sort_values(by="Impact", key=abs, ascending=False)
-
-        st.bar_chart(df.set_index("Feature"))
-
-        # ===== SHAP FORCE PLOT =====
-        st.subheader("⚡ SHAP Force Plot")
-
-        fig = plt.figure()
-        shap.force_plot(
-            explainer.expected_value[1],
-            shap_values[1][0],
-            matplotlib=True,
-            show=False
-        )
-        st.pyplot(fig)
-
-        # ===== SAVE FIG =====
-        fig.savefig("shap_plot.png")
-
-        st.download_button(
-            "📥 Download SHAP figure",
-            open("shap_plot.png", "rb"),
-            file_name="shap_plot.png"
-        )
-
-    except Exception as e:
-        st.warning(f"SHAP error: {e}")
-
+# ================= OUTLIER =================
+def detect_outliers(df):
+    z = np.abs((df - df.mean()) / df.std())
+    outliers = (z > 3).sum().sum()
+    return outliers
 
 # ================= METRICS =================
-def show_metrics(model, X_test, y_test):
-    y_pred = model.predict(X_test)
-    y_prob = model.predict_proba(X_test)[:, 1]
+def evaluate(model, X, y):
+    pred = model.predict(X)
+    prob = model.predict_proba(X)[:,1]
 
-    col1, col2 = st.columns(2)
+    return {
+        "Accuracy": accuracy_score(y, pred),
+        "Precision": precision_score(y, pred),
+        "Recall": recall_score(y, pred),
+        "F1": f1_score(y, pred),
+        "AUC": auc(*roc_curve(y, prob)[:2])
+    }
 
-    # CONFUSION MATRIX
-    with col1:
-        cm = confusion_matrix(y_test, y_pred)
-        fig, ax = plt.subplots()
-        sns.heatmap(cm, annot=True, fmt="d", ax=ax)
-        st.pyplot(fig)
+# ================= SHAP =================
+def show_shap(model, data, features):
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(data)
 
-        fig.savefig("confusion_matrix.png")
-        st.download_button(
-            "Download CM",
-            open("confusion_matrix.png", "rb"),
-            file_name="cm.png"
-        )
+    df = pd.DataFrame({
+        "Feature": features,
+        "Impact": shap_values[1][0]
+    }).sort_values(by="Impact", key=abs, ascending=False)
 
-    # ROC
-    with col2:
-        fpr, tpr, _ = roc_curve(y_test, y_prob)
-        roc_auc = auc(fpr, tpr)
+    st.subheader("Feature Importance")
+    st.bar_chart(df.set_index("Feature"))
 
-        fig, ax = plt.subplots()
-        ax.plot(fpr, tpr, label=f"AUC={roc_auc:.2f}")
-        ax.plot([0, 1], [0, 1], linestyle="--")
-        ax.legend()
-        st.pyplot(fig)
+    fig = plt.figure()
+    shap.force_plot(explainer.expected_value[1], shap_values[1][0], matplotlib=True, show=False)
+    st.pyplot(fig)
 
-        fig.savefig("roc_curve.png")
-        st.download_button(
-            "Download ROC",
-            open("roc_curve.png", "rb"),
-            file_name="roc.png"
-        )
+    fig.savefig("shap.png")
+    st.download_button("Download SHAP", open("shap.png","rb"), "shap.png")
 
+# ================= UI =================
+st.title("🧠 CardioAI Research Dashboard")
 
-# ================= 1. PREDICTION =================
-if menu == "Prediction":
+menu = st.sidebar.radio(
+    "Menu",
+    ["Upload Dataset","Model Analysis"]
+)
 
-    tab1, tab2 = st.tabs(["❤️ Heart", "🧠 Stroke"])
+# ================= TEMPLATE =================
+st.sidebar.header("Templates")
 
-    # HEART
-    with tab1:
-        col1, col2 = st.columns(2)
+def download(path):
+    if os.path.exists(path):
+        with open(path,"rb") as f:
+            st.sidebar.download_button(path, f)
 
-        with col1:
-            age = st.slider("Age", 20, 80, 40)
-            cp = st.slider("Chest Pain", 0, 3)
-            trestbps = st.slider("Blood Pressure", 80, 200, 120)
+download("data/heart_template.csv")
+download("data/stroke_template.csv")
 
-        with col2:
-            chol = st.slider("Cholesterol", 100, 400, 200)
-            thalach = st.slider("Heart Rate", 70, 210, 150)
-            sex = st.selectbox("Sex", [0, 1])
+# ================= UPLOAD =================
+if menu == "Upload Dataset":
 
-        if st.button("Predict Heart"):
-            data = np.array([[age, sex, cp, trestbps, chol,
-                              0, 0, thalach, 0,
-                              0, 1, 0, 2]])
-
-            prob = heart_model.predict_proba(data)[0][1]
-
-            st.metric("Risk", get_risk(prob))
-            st.progress(float(prob))
-
-            show_shap(
-                heart_model,
-                data,
-                ["age","sex","cp","bp","chol","fbs","ecg",
-                 "hr","exang","oldpeak","slope","ca","thal"]
-            )
-
-    # STROKE
-    with tab2:
-        col1, col2 = st.columns(2)
-
-        with col1:
-            age = st.slider("Age", 1, 100, 40)
-            hypertension = st.selectbox("Hypertension", [0, 1])
-            heart_disease = st.selectbox("Heart Disease", [0, 1])
-
-        with col2:
-            glucose = st.slider("Glucose", 50, 300, 100)
-            bmi = st.slider("BMI", 10.0, 50.0, 25.0)
-
-        if st.button("Predict Stroke"):
-            data = np.array([[age, hypertension, heart_disease,
-                              1, 2, 0, glucose, bmi, 1]])
-
-            prob = stroke_model.predict_proba(data)[0][1]
-
-            st.metric("Risk", get_risk(prob))
-            st.progress(float(prob))
-
-            show_shap(
-                stroke_model,
-                data,
-                ["age","htn","heart","married",
-                 "work","res","glucose","bmi","smoke"]
-            )
-
-
-# ================= 2. UPLOAD =================
-elif menu == "Upload Dataset":
-
-    st.subheader("📂 Upload CSV")
-
-    file = st.file_uploader("Upload dataset", type=["csv"])
+    file = st.file_uploader("Upload CSV/Excel", ["csv","xlsx"])
 
     if file:
-        df = pd.read_csv(file)
+
+        df = pd.read_csv(file) if file.name.endswith(".csv") else pd.read_excel(file)
         st.write(df.head())
 
-        df = preprocess_df(df)
+        model_choice = st.selectbox("Model", ["Heart","Stroke"])
 
-        model_option = st.selectbox("Model", ["Heart", "Stroke"])
+        if model_choice == "Heart":
+            df = auto_map(df, HEART)
+            cols = HEART
+            model = heart_model
+        else:
+            df = auto_map(df, STROKE)
+            cols = STROKE
+            model = stroke_model
 
-        if st.button("Predict Dataset"):
-            try:
-                model = heart_model if model_option == "Heart" else stroke_model
+        missing = [c for c in cols if c not in df.columns]
 
-                preds = model.predict(df)
-                probs = model.predict_proba(df)[:, 1]
+        if missing:
+            st.error(f"Missing columns: {missing}")
+            st.stop()
 
-                df["Prediction"] = preds
-                df["Probability"] = probs
+        df = preprocess(df)
+        df = df[cols]
 
-                st.write(df)
+        # OUTLIER
+        outliers = detect_outliers(df)
+        st.warning(f"Outliers detected: {outliers}")
 
-                st.download_button(
-                    "Download Result",
-                    df.to_csv(index=False),
-                    "result.csv"
-                )
+        # SCALING
+        df_scaled = scale_data(df)
 
-            except Exception as e:
-                st.error(f"Data error: {e}")
+        if st.button("Predict"):
 
+            preds = model.predict(df_scaled)
+            probs = model.predict_proba(df_scaled)[:,1]
 
-# ================= 3. HISTORY =================
-elif menu == "History":
+            df["Prediction"] = preds
+            df["Probability"] = probs
 
-    if st.session_state.history:
-        df = pd.DataFrame(st.session_state.history)
-        st.dataframe(df)
+            st.write(df)
 
-        st.line_chart(df["prob"])
-    else:
-        st.info("No history yet")
+            st.download_button("Download Result", df.to_csv(index=False), "result.csv")
 
-# ================= FOOTER =================
-st.markdown("---")
-st.caption("CardioAI - Research Dashboard")
+            show_shap(model, df_scaled.values[:1], df.columns)
+
+# ================= ANALYSIS =================
+elif menu == "Model Analysis":
+
+    st.subheader("Model Performance")
+
+    try:
+        X_test, y_test = joblib.load("models/heart_test.pkl")
+
+        metrics = evaluate(heart_model, X_test, y_test)
+
+        df_metrics = pd.DataFrame(metrics.items(), columns=["Metric","Value"])
+        st.table(df_metrics)
+
+        # export table
+        df_metrics.to_csv("metrics.csv", index=False)
+
+        st.download_button(
+            "Download Metrics",
+            open("metrics.csv","rb"),
+            "metrics.csv"
+        )
+
+    except:
+        st.warning("No test data found")
+
+# ================= INFO =================
+st.info("""
+✅ Auto column mapping
+✅ Auto preprocessing
+✅ Auto scaling
+✅ Outlier detection
+✅ SHAP explainability
+✅ Export results for research
+""")
