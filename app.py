@@ -3,258 +3,167 @@ import pandas as pd
 import numpy as np
 import joblib
 import os
-import shap
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_curve, auc
-from difflib import get_close_matches
 
-st.set_page_config(page_title="CardioAI", layout="wide")
+# ================= CONFIG =================
+st.set_page_config(page_title="CardioAI Healthcare", layout="wide")
 
-# ================= LOAD =================
+# ================= LOAD MODEL =================
 def load_model(path):
     return joblib.load(path) if os.path.exists(path) else None
 
 heart_model = load_model("models/heart_model.pkl")
 stroke_model = load_model("models/stroke_model.pkl")
 
-# ================= FEATURE SET =================
-HEART = ["age","sex","cp","trestbps","chol","fbs","restecg","thalach","exang","oldpeak","slope","ca","thal"]
-STROKE = ["age","gender","hypertension","heart_disease","ever_married","work_type","residence","avg_glucose","bmi","smoking"]
+# ================= FEATURES =================
+HEART = ["age","sex","cp","trestbps","chol","fbs","restecg",
+         "thalach","exang","oldpeak","slope","ca","thal"]
 
-# ================= SEMANTIC DICT =================
-SEMANTIC_DICT = {
-    "age": ["age","patient_age","years"],
-    "sex": ["sex","gender"],
-    "cp": ["cp","chest_pain"],
-    "trestbps": ["bp","blood_pressure"],
-    "chol": ["chol","cholesterol"],
-    "thalach": ["heart_rate","pulse","max_hr"],
-    "exang": ["angina"],
-    "oldpeak": ["st_depression"],
-    "slope": ["slope"],
-    "ca": ["vessels"],
-    "thal": ["thal"],
+STROKE = ["age","gender","hypertension","heart_disease",
+          "ever_married","work_type","residence",
+          "avg_glucose","bmi","smoking"]
 
-    "avg_glucose": ["glucose","glucose_level","sugar"],
-    "bmi": ["bmi","body_mass"],
-    "smoking": ["smoking","smoker"],
-    "hypertension": ["hypertension","high_bp"],
-    "heart_disease": ["heart_disease","cardiac"],
-    "ever_married": ["married"],
-    "work_type": ["job","occupation"],
-    "residence": ["residence","location"]
-}
-
-# ================= HYBRID MAP =================
-def hybrid_map(df, features):
-    df = df.copy()
-    df.columns = df.columns.astype(str)
-    df.columns = df.columns.str.strip().str.lower()
-
-    mapping = {}
-    unmatched = []
-
-    for col in df.columns:
-        mapped = None
-
-        if col in features:
-            mapped = col
-
-        if not mapped:
-            for key, vals in SEMANTIC_DICT.items():
-                for v in vals:
-                    if v in col:
-                        mapped = key
-                        break
-                if mapped:
-                    break
-
-        if not mapped:
-            match = get_close_matches(col, features, n=1, cutoff=0.6)
-            if match:
-                mapped = match[0]
-
-        if mapped:
-            mapping[col] = mapped
-        else:
-            unmatched.append(col)
-
-    return df.rename(columns=mapping), mapping, unmatched
-
-# ================= PREPROCESS =================
+# ================= CLEAN DATA =================
 def preprocess(df):
     df = df.copy()
+    for c in df.columns:
+        if df[c].dtype == "object":
+            df[c] = df[c].astype("category").cat.codes
 
-    for col in df.columns:
-        if df[col].dtype == "object":
-            df[col] = df[col].astype("category").cat.codes
-
-    df = df.replace([np.inf, -np.inf], np.nan)
     df = df.fillna(df.mean(numeric_only=True))
     return df
 
-# ================= SCALE =================
 def scale(df):
-    scaler = StandardScaler()
-    return pd.DataFrame(scaler.fit_transform(df), columns=df.columns)
+    return pd.DataFrame(StandardScaler().fit_transform(df), columns=df.columns)
 
-# ================= OUTLIER =================
-def detect_outliers(df):
-    z = np.abs((df - df.mean()) / df.std())
-    return (z > 3).sum().sum()
-
-# ================= VALIDATION =================
-def validate_medical(df, model_type):
-
-    issues = []
-
-    def check_range(col, low, high):
-        if col in df.columns:
-            bad = df[(df[col] < low) | (df[col] > high)]
-            if len(bad) > 0:
-                issues.append(f"{col}: {len(bad)} values outside [{low}, {high}]")
-
-    if model_type == "Heart":
-        check_range("age", 20, 100)
-        check_range("trestbps", 80, 200)
-        check_range("chol", 120, 400)
-        check_range("thalach", 60, 210)
-        check_range("oldpeak", 0, 6)
-
-    else:
-        check_range("age", 0, 120)
-        check_range("avg_glucose", 50, 300)
-        check_range("bmi", 10, 60)
-
-    return issues
-
-# ================= SHAP =================
-def show_shap(model, data, features):
-    try:
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(data)
-
-        df = pd.DataFrame({
-            "Feature": features,
-            "Impact": shap_values[1][0]
-        }).sort_values(by="Impact", key=abs, ascending=False)
-
-        st.subheader("Feature Importance")
-        st.bar_chart(df.set_index("Feature"))
-
-    except:
-        st.warning("SHAP not supported")
-
-# ================= SAFE FILE =================
+# ================= SAFE READ =================
 def safe_read(file):
     if file is None:
         return None
 
     try:
-        if file.name.lower().endswith(".csv"):
+        if file.name.endswith(".csv"):
             df = pd.read_csv(file)
-        elif file.name.lower().endswith(".xlsx"):
-            df = pd.read_excel(file, engine="openpyxl")
         else:
-            st.error("Only CSV/Excel supported")
-            return None
+            df = pd.read_excel(file, engine="openpyxl")
 
-        df.columns = df.columns.astype(str)
         df.columns = df.columns.str.strip().str.lower()
-
-        if df.shape[0] == 0:
-            st.error("Empty file")
-            return None
-
         return df
 
-    except Exception as e:
-        st.error(str(e))
+    except:
+        st.error("File error")
         return None
 
-# ================= UI =================
-st.title("🧠 CardioAI Healthcare System")
+# ================= UI HEADER =================
+st.markdown("""
+<h2 style='color:#1f77b4'>🏥 CardioAI Smart Healthcare System</h2>
+""", unsafe_allow_html=True)
 
-menu = st.sidebar.radio("Menu", ["Upload Dataset","Model Analysis"])
+# ================= NAVBAR =================
+menu = st.tabs([
+    "🏠 Trang chủ",
+    "📊 Dự đoán",
+    "📂 Upload dữ liệu",
+    "📈 Dashboard",
+    "💬 Hỏi đáp"
+])
 
-# ================= MAIN =================
-if menu == "Upload Dataset":
+# ================= HOME =================
+with menu[0]:
+    st.markdown("""
+### Hệ thống hỗ trợ chẩn đoán bệnh tim và đột quỵ
 
-    file = st.file_uploader("Upload CSV/Excel", type=["csv","xlsx"])
+- ✔ Dự đoán nguy cơ bệnh
+- ✔ Phân tích dữ liệu y khoa
+- ✔ Hỗ trợ bác sĩ và bệnh nhân
+""")
+
+# ================= PREDICT =================
+with menu[1]:
+
+    st.subheader("Dự đoán nhanh")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        age = st.slider("Age", 20, 80, 40)
+        chol = st.slider("Cholesterol", 100, 400, 200)
+
+    with col2:
+        bp = st.slider("Blood Pressure", 80, 200, 120)
+        hr = st.slider("Heart Rate", 60, 200, 150)
+
+    if st.button("Predict Heart Risk"):
+
+        data = np.array([[age,1,2,bp,chol,0,1,hr,0,1.2,1,0,2]])
+        prob = heart_model.predict_proba(data)[0][1]
+
+        st.metric("Risk Score", f"{prob:.2f}")
+
+# ================= UPLOAD =================
+with menu[2]:
+
+    st.subheader("Upload dữ liệu bệnh nhân")
+
+    file = st.file_uploader("Chọn file CSV hoặc Excel")
+
     df = safe_read(file)
 
     if df is not None:
 
-        st.write(df.head())
+        st.success("Đã tải dữ liệu")
 
-        model_choice = st.selectbox("Model", ["Heart","Stroke"])
+        model_choice = st.selectbox("Chọn mô hình", ["Heart","Stroke"])
 
-        if model_choice == "Heart":
-            df, mapping, unmatched = hybrid_map(df, HEART)
-            cols = HEART
-            model = heart_model
-        else:
-            df, mapping, unmatched = hybrid_map(df, STROKE)
-            cols = STROKE
-            model = stroke_model
+        if st.button("Chạy dự đoán"):
 
-        st.write("Mapping:", mapping)
+            df = preprocess(df)
 
-        if unmatched:
-            st.warning(f"Unmapped: {unmatched}")
+            if model_choice == "Heart":
+                df = df[HEART]
+                model = heart_model
+            else:
+                df = df[STROKE]
+                model = stroke_model
 
-        missing = [c for c in cols if c not in df.columns]
-        if missing:
-            st.error(f"Missing columns: {missing}")
-            st.stop()
-
-        # ✅ VALIDATION
-        issues = validate_medical(df, model_choice)
-        if len(issues) > 0:
-            st.error("⚠️ Medical Data Issues:")
-            for i in issues:
-                st.write("-", i)
-        else:
-            st.success("✅ Data looks valid")
-
-        df_proc = preprocess(df)[cols]
-
-        outliers = detect_outliers(df_proc)
-        st.warning(f"Outliers detected: {outliers}")
-
-        df_scaled = scale(df_proc)
-
-        if st.button("Predict"):
+            df_scaled = scale(df)
 
             preds = model.predict(df_scaled)
             probs = model.predict_proba(df_scaled)[:,1]
 
-            df["Prediction"] = preds
-            df["Probability"] = probs
+            result = df.copy()
+            result["Prediction"] = preds
+            result["Probability"] = probs
 
-            st.write(df)
+            st.success("Hoàn thành dự đoán")
 
-            st.download_button("Download Result", df.to_csv(index=False), "result.csv")
+            st.dataframe(result)
 
-            show_shap(model, df_scaled.values[:1], cols)
+            st.download_button(
+                "📥 Tải kết quả",
+                result.to_csv(index=False),
+                "result.csv"
+            )
 
-elif menu == "Model Analysis":
+# ================= DASHBOARD =================
+with menu[3]:
 
-    try:
-        X_test, y_test = joblib.load("models/heart_test.pkl")
-        preds = heart_model.predict(X_test)
-        prob = heart_model.predict_proba(X_test)[:,1]
+    st.subheader("Dashboard")
 
-        st.write({
-            "Accuracy": accuracy_score(y_test, preds),
-            "Precision": precision_score(y_test, preds),
-            "Recall": recall_score(y_test, preds),
-            "F1": f1_score(y_test, preds),
-            "AUC": auc(*roc_curve(y_test, prob)[:2])
-        })
+    st.info("Chức năng hiển thị biểu đồ sẽ đặt ở đây")
 
-    except:
-        st.warning("No test data")
+# ================= CHAT =================
+with menu[4]:
+
+    st.subheader("💬 Trợ lý y tế")
+
+    question = st.text_input("Nhập câu hỏi")
+
+    if question:
+        if "tim" in question.lower():
+            st.write("Bệnh tim liên quan đến huyết áp, cholesterol và lối sống.")
+        elif "đột quỵ" in question:
+            st.write("Đột quỵ liên quan đến huyết áp cao và đường huyết.")
+        else:
+            st.write("Vui lòng hỏi về bệnh tim hoặc đột quỵ.")
